@@ -1,10 +1,13 @@
-Fork of dwm 6.5 including the following:
+I have no idea what I am doing.
+most patches are just implemented by me directly, I may replace things in the future
+
+If I end up using a block of code from chatgpt I will leave its very obvious chatgpt comments so it is clear when I have used it.
+I do not want it to write the thing for me but if I dont understand something, ask it, and it spits out something that makes sense to me, I'm going to implement it, this is significantly more convenient than reading 40 pages of C documentation.
+
+Features in this fork:
 
 Proper fullscreening
 Gaps spacing applied to the bar
 Media key binds (using playerctl and pactl)
 Focus master
 Transparent bars
-
-
-I have no idea what I am doing
