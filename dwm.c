@@ -55,6 +55,7 @@
 #define HEIGHT(X)               ((X)->h + 2 * (X)->bw)
 #define TAGMASK                 ((1 << LENGTH(tags)) - 1)
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
+#define OPAQUE                  0xffU
 
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
@@ -91,7 +92,7 @@ struct Client {
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	unsigned int tags;
-	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
+	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, iscentered;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -138,6 +139,7 @@ typedef struct {
 	unsigned int tags;
 	int isfloating;
 	int monitor;
+	int iscentered;
 } Rule;
 
 /* function declarations */
@@ -186,7 +188,6 @@ static void movemouse(const Arg *arg);
 static Client *nexttiled(Client *c);
 static void pop(Client *c);
 static void propertynotify(XEvent *e);
-static void quit(const Arg *arg);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizeclient(Client *c, int x, int y, int w, int h);
@@ -210,6 +211,7 @@ static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
+static void togglefullscr(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unfocus(Client *c, int setfocus);
@@ -231,7 +233,11 @@ static Monitor *wintomon(Window w);
 static int xerror(Display *dpy, XErrorEvent *ee);
 static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
+static void xinitvisual();
 static void zoom(const Arg *arg);
+
+void togglefullscreen(const Arg *arg);
+void focusmaster(const Arg *arg);
 
 /* variables */
 static const char broken[] = "broken";
@@ -266,6 +272,11 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
+
+static int useargb = 0;
+static Visual *visual;
+static int depth;
+static Colormap cmap;
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -309,6 +320,7 @@ applyrules(Client *c)
 		XFree(ch.res_name);
 	c->tags = c->tags & TAGMASK ? c->tags & TAGMASK : c->mon->tagset[c->mon->seltags];
 }
+
 
 int
 applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
@@ -701,6 +713,7 @@ drawbar(Monitor *m)
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
+	int bxo = barspaced ? gappx : 0;
 	Client *c;
 
 	if (!m->showbar)
@@ -709,7 +722,7 @@ drawbar(Monitor *m)
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon) { /* status is only drawn on selected monitor */
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
+		tw = TEXTW(stext) - lrpad + 2 + bxo * 2; /* 2px right padding */
 		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
 	}
 
@@ -733,7 +746,7 @@ drawbar(Monitor *m)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
-	if ((w = m->ww - tw - x) > bh) {
+	if ((w = m->ww - tw - x ) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeNorm]);
 			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
@@ -1050,6 +1063,13 @@ manage(Window w, XWindowAttributes *wa)
 	} else {
 		c->mon = selmon;
 		applyrules(c);
+		if (c->isfloating == 1 && c->iscentered == 1) {
+		int cw = c->w;
+		int ch = c->h;
+		int cx = c->mon->mx + (c->mon->mw - cw) / 2;
+		int cy = c->mon->my + (c->mon->mh - ch) / 2;
+		resize(c, cx, cy, cw, ch, 0);
+		}
 	}
 
 	if (c->x + WIDTH(c) > c->mon->wx + c->mon->ww)
@@ -1252,12 +1272,6 @@ propertynotify(XEvent *e)
 		if (ev->atom == netatom[NetWMWindowType])
 			updatewindowtype(c);
 	}
-}
-
-void
-quit(const Arg *arg)
-{
-	running = 0;
 }
 
 Monitor *
@@ -1479,32 +1493,52 @@ setfocus(Client *c)
 }
 
 void
+togglefullscr(const Arg *arg)
+{
+    if (selmon->sel)
+        setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
+}
+
+static void
 setfullscreen(Client *c, int fullscreen)
 {
-	if (fullscreen && !c->isfullscreen) {
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)&netatom[NetWMFullscreen], 1);
-		c->isfullscreen = 1;
-		c->oldstate = c->isfloating;
-		c->oldbw = c->bw;
-		c->bw = 0;
-		c->isfloating = 1;
-		resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
-		XRaiseWindow(dpy, c->win);
-	} else if (!fullscreen && c->isfullscreen){
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)0, 0);
-		c->isfullscreen = 0;
-		c->isfloating = c->oldstate;
-		c->bw = c->oldbw;
-		c->x = c->oldx;
-		c->y = c->oldy;
-		c->w = c->oldw;
-		c->h = c->oldh;
-		resizeclient(c, c->x, c->y, c->w, c->h);
-		arrange(c->mon);
-	}
+    if (fullscreen && !c->isfullscreen) {
+        c->isfullscreen = 1;
+        c->oldbw = c->bw;      // Save old border width
+        c->bw = 0;             // Remove border
+        XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *) &netatom[NetWMFullscreen], 1);
+        resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
+	XRaiseWindow(dpy, c->win);
+    } else if (!fullscreen && c->isfullscreen) {
+        c->isfullscreen = 0;
+        c->bw = c->oldbw;       // Restore border width
+        XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *) 0, 0);
+	arrange(selmon);
+	/*
+	resizeclient(c,
+   	c->mon->wx,
+   	c->mon->wy,
+   	c->mon->ww,
+   	c->mon->wh
+	
+	);
+	*/
+    }
 }
+
+/* Focus the window in the master area */
+void focusmaster(const Arg *arg) {
+    Monitor *m = selmon;
+    Client *c;
+
+    if ((c = m->clients)) {  // Focus the first client in the master area
+        focus(c);
+        restack(m);
+    }
+}
+
 
 void
 setlayout(const Arg *arg)
@@ -1557,7 +1591,8 @@ setup(void)
 	sw = DisplayWidth(dpy, screen);
 	sh = DisplayHeight(dpy, screen);
 	root = RootWindow(dpy, screen);
-	drw = drw_create(dpy, screen, root, sw, sh);
+	xinitvisual();
+	drw = drw_create(dpy, screen, root, sw, sh, visual, depth, cmap);
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
@@ -1585,7 +1620,7 @@ setup(void)
 	/* init appearance */
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
-		scheme[i] = drw_scm_create(drw, colors[i], 3);
+		scheme[i] = drw_scm_create(drw, colors[i], alphas[i], 3);
 	/* init bars */
 	updatebars();
 	updatestatus();
@@ -1686,37 +1721,46 @@ tagmon(const Arg *arg)
 void
 tile(Monitor *m)
 {
-	unsigned int i, n, h, mw, my, ty;
-	Client *c;
+    unsigned int i, n, h, mw, my, ty;
+    Client *c;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	if (n == 0)
-		return;
+    for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
+    if (n == 0)
+        return;
 
-	if (n > m->nmaster)
-		mw = m->nmaster ? m->ww * m->mfact : 0;
-	else
-		mw = m->ww;
-	for (i = my = ty = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
-		if (i < m->nmaster) {
-			h = (m->wh - my) / (MIN(n, m->nmaster) - i);
-			resize(c, m->wx, m->wy + my, mw - (2*c->bw), h - (2*c->bw), 0);
-			if (my + HEIGHT(c) < m->wh)
-				my += HEIGHT(c);
-		} else {
-			h = (m->wh - ty) / (n - i);
-			resize(c, m->wx + mw, m->wy + ty, m->ww - mw - (2*c->bw), h - (2*c->bw), 0);
-			if (ty + HEIGHT(c) < m->wh)
-				ty += HEIGHT(c);
-		}
+    if (n > m->nmaster)
+        mw = m->nmaster ? (m->ww - gappx) * m->mfact : 0;
+    else
+        mw = m->ww - gappx;
+
+    my = ty = gappx;
+    for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
+        if (c->isfullscreen) {
+            resize(c, m->mx, m->my, m->mw, m->mh, 0);
+            continue;
+        }
+        if (i < m->nmaster) {
+            h = (m->wh - my - gappx * (MIN(n, m->nmaster) - i)) / (MIN(n, m->nmaster) - i);
+            resize(c, m->wx + gappx, m->wy + my, mw - (2 * c->bw) - gappx, h - (2 * c->bw), 0);
+            my += h + gappx;
+        } else {
+            h = (m->wh - ty - gappx * (n - i)) / (n - i);
+            resize(c, m->wx + mw + gappx, m->wy + ty, m->ww - mw - (2 * c->bw) - 2 * gappx, h - (2 * c->bw), 0);
+            ty += h + gappx;
+        }
+    }
 }
+
+
 
 void
 togglebar(const Arg *arg)
 {
+	int bxo = barspaced ? gappx : 0;
+
 	selmon->showbar = !selmon->showbar;
 	updatebarpos(selmon);
-	XMoveResizeWindow(dpy, selmon->barwin, selmon->wx, selmon->by, selmon->ww, bh);
+	XMoveResizeWindow(dpy, selmon->barwin, selmon->wx + bxo, selmon->by, selmon->ww - bxo * 2, bh);
 	arrange(selmon);
 }
 
@@ -1817,36 +1861,49 @@ unmapnotify(XEvent *e)
 void
 updatebars(void)
 {
-	Monitor *m;
-	XSetWindowAttributes wa = {
-		.override_redirect = True,
-		.background_pixmap = ParentRelative,
-		.event_mask = ButtonPressMask|ExposureMask
-	};
-	XClassHint ch = {"dwm", "dwm"};
-	for (m = mons; m; m = m->next) {
-		if (m->barwin)
-			continue;
-		m->barwin = XCreateWindow(dpy, root, m->wx, m->by, m->ww, bh, 0, DefaultDepth(dpy, screen),
-				CopyFromParent, DefaultVisual(dpy, screen),
-				CWOverrideRedirect|CWBackPixmap|CWEventMask, &wa);
-		XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
-		XMapRaised(dpy, m->barwin);
-		XSetClassHint(dpy, m->barwin, &ch);
-	}
+    int bxo = barspaced ? gappx : 0;
+	
+    Monitor *m;
+    XSetWindowAttributes wa = {
+        .override_redirect = True,
+	.background_pixel = 0,
+	.border_pixel = 0,
+	.colormap = cmap,
+        .event_mask = ButtonPressMask|ExposureMask
+    };
+    XClassHint ch = {"dwm", "dwm"};
+    for (m = mons; m; m = m->next) {
+        if (m->barwin)
+            continue;
+        m->barwin = XCreateWindow(dpy, root, m->wx + bxo, m->by, m->ww - bxo * 2, bh, 0, depth,
+		InputOutput, visual,
+                CWOverrideRedirect|CWBackPixmap|CWBorderPixel|CWColormap|CWEventMask, &wa);
+
+        // --- ADD THIS BLOCK ---
+        unsigned long opacity = (unsigned long)(baropacity * 0xFFFFFFFF); // 80% opacity
+        XChangeProperty(dpy, m->barwin, XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False),
+            XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&opacity, 1);
+        // --- END ADDITION ---
+
+        XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
+        XMapRaised(dpy, m->barwin);
+        XSetClassHint(dpy, m->barwin, &ch);
+    }
 }
 
 void
 updatebarpos(Monitor *m)
 {
+    int byo = barspaced ? gappx : 0;
+
 	m->wy = m->my;
 	m->wh = m->mh;
 	if (m->showbar) {
-		m->wh -= bh;
-		m->by = m->topbar ? m->wy : m->wy + m->wh;
-		m->wy = m->topbar ? m->wy + bh : m->wy;
+		m->wh -= bh + byo;
+		m->by = m->topbar ? m->wy + byo : m->wy + m->wh;
+		m->wy = m->topbar ? m->wy + bh + byo : m->wy;
 	} else
-		m->by = -bh;
+		m->by = -bh ;
 }
 
 void
@@ -2125,6 +2182,43 @@ xerrorstart(Display *dpy, XErrorEvent *ee)
 {
 	die("dwm: another window manager is already running");
 	return -1;
+}
+
+void
+xinitvisual()
+{
+    XVisualInfo *infos;
+	XRenderPictFormat *fmt;
+	int nitems;
+	int i;
+
+	XVisualInfo tpl = {
+        .screen = screen,
+		.depth = 32,
+		.class = TrueColor
+	};
+	long masks = VisualScreenMask | VisualDepthMask | VisualClassMask;
+
+	infos = XGetVisualInfo(dpy, masks, &tpl, &nitems);
+	visual = NULL;
+	for(i = 0; i < nitems; i ++) {
+        fmt = XRenderFindVisualFormat(dpy, infos[i].visual);
+		if (fmt->type == PictTypeDirect && fmt->direct.alphaMask) {
+            visual = infos[i].visual;
+			depth = infos[i].depth;
+			cmap = XCreateColormap(dpy, root, visual, AllocNone);
+			useargb = 1;
+			break;
+        }
+    }
+
+	XFree(infos);
+
+	if (! visual) {
+        visual = DefaultVisual(dpy, screen);
+		depth = DefaultDepth(dpy, screen);
+		cmap = DefaultColormap(dpy, screen);
+    }
 }
 
 void
