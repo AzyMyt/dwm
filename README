@@ -5,9 +5,18 @@ If I end up using a block of code from chatgpt I will leave its very obvious cha
 I do not want it to write the thing for me but if I dont understand something, ask it, and it spits out something that makes sense to me, I'm going to implement it, this is significantly more convenient than reading 40 pages of C documentation.
 
 Features in this fork:
-
 Proper fullscreening
 Gaps spacing applied to the bar
 Media key binds (using playerctl and pactl)
 Focus master
-Transparent bars
+Alpha patch (bar transparency, fixed border opacity)
+
+Issues:
+Certain windows marked as floating may not properly spawn in the middle of certain monitors
+
+TODO:
+apply resize corners patch
+apply systray patch
+implement cursor warp functionality
+columns layout or something
+outside-window borders maybe
