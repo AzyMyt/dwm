@@ -6,7 +6,9 @@ I do not want it to write the thing for me but if I dont understand something, a
 
 Features in this fork:
 Proper fullscreening
-Gaps spacing applied to the bar
+Gaps
+Bar gaps
+Bar overlaying (probably broken as hell)
 Media key binds (using playerctl and pactl)
 Focus master
 Alpha patch (bar transparency, fixed border opacity)
