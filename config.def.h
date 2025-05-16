@@ -6,8 +6,10 @@ static const unsigned int snap			= 32;       /* snap pixel */
 static const unsigned int gappx			= 10;	
 static const int showbar			= 1;        /* 0 means no bar */
 static const int topbar				= 1;	    /* 0 means bottom bar */
-static const float baropacity			= 1;	// note to myself; remove this	
-static const int barspaced			= 0;	    /* 1 means bar will be affected by gaps */
+static const int barspacey			= gappx;    /* how far to space the bar vertically */
+static const int barspacex			= gappx;    /* how far to space the bar horizontally */
+
+static const int baroverlap			= 0;	    /* 0 means the bar will resize the work space */
 
 static const char *fonts[]          = { "monospace:size=10" };
 static const char dmenufont[]       = "monospace:size=10";

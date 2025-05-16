@@ -713,7 +713,6 @@ drawbar(Monitor *m)
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
-	int bxo = barspaced ? gappx : 0;
 	Client *c;
 
 	if (!m->showbar)
@@ -722,7 +721,7 @@ drawbar(Monitor *m)
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon) { /* status is only drawn on selected monitor */
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		tw = TEXTW(stext) - lrpad + 2 + bxo * 2; /* 2px right padding */
+		tw = TEXTW(stext) - lrpad + 2 + barspacex * 2; /* 2px right padding */
 		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
 	}
 
@@ -1756,11 +1755,9 @@ tile(Monitor *m)
 void
 togglebar(const Arg *arg)
 {
-	int bxo = barspaced ? gappx : 0;
-
 	selmon->showbar = !selmon->showbar;
 	updatebarpos(selmon);
-	XMoveResizeWindow(dpy, selmon->barwin, selmon->wx + bxo, selmon->by, selmon->ww - bxo * 2, bh);
+	XMoveResizeWindow(dpy, selmon->barwin, selmon->wx + barspacex, selmon->by, selmon->ww - barspacex * 2, bh);
 	arrange(selmon);
 }
 
@@ -1861,8 +1858,6 @@ unmapnotify(XEvent *e)
 void
 updatebars(void)
 {
-    int bxo = barspaced ? gappx : 0;
-	
     Monitor *m;
     XSetWindowAttributes wa = {
         .override_redirect = True,
@@ -1875,15 +1870,9 @@ updatebars(void)
     for (m = mons; m; m = m->next) {
         if (m->barwin)
             continue;
-        m->barwin = XCreateWindow(dpy, root, m->wx + bxo, m->by, m->ww - bxo * 2, bh, 0, depth,
+        m->barwin = XCreateWindow(dpy, root, m->wx + barspacex, m->by, m->ww - barspacex * 2, bh, 0, depth,
 		InputOutput, visual,
                 CWOverrideRedirect|CWBackPixmap|CWBorderPixel|CWColormap|CWEventMask, &wa);
-
-        // --- ADD THIS BLOCK ---
-        unsigned long opacity = (unsigned long)(baropacity * 0xFFFFFFFF); // 80% opacity
-        XChangeProperty(dpy, m->barwin, XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False),
-            XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&opacity, 1);
-        // --- END ADDITION ---
 
         XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
         XMapRaised(dpy, m->barwin);
@@ -1894,14 +1883,16 @@ updatebars(void)
 void
 updatebarpos(Monitor *m)
 {
-    int byo = barspaced ? gappx : 0;
-
 	m->wy = m->my;
 	m->wh = m->mh;
 	if (m->showbar) {
-		m->wh -= bh + byo;
-		m->by = m->topbar ? m->wy + byo : m->wy + m->wh;
-		m->wy = m->topbar ? m->wy + bh + byo : m->wy;
+		if (!baroverlay) {
+		m->wh -= bh + barspacey;
+		m->by = m->topbar ? m->wy + barspacey : m->wy + m->wh;
+		m->wy = m->topbar ? m->wy + bh + barspacey : m->wy;
+		} else
+			m->by = m->topbar ? m->wy + barspacey : m->wy + m->wh;
+		
 	} else
 		m->by = -bh ;
 }
